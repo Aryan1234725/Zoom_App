@@ -110,7 +110,8 @@ export default function VideoMeetComponent() {
     let [snackbarOpen, setSnackbarOpen] = useState(false);
     let [snackbarMessage, setSnackbarMessage] = useState('');
     let [snackbarSeverity, setSnackbarSeverity] = useState('info');
-    let [connectionQuality, setConnectionQuality] = useState('good');
+    // setConnectionQuality intentionally omitted — value is display-only (no setter needed yet)
+    const [connectionQuality] = useState('good');
     let [showEmojiPicker, setShowEmojiPicker] = useState(false);
     let [anchorEl, setAnchorEl] = useState(null);
     let [brightness, setBrightness] = useState(100);
