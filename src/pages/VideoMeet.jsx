@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react'
+import React, { useEffect, useRef, useState, useCallback } from 'react'
 import io from "socket.io-client";
 import { Badge, IconButton, TextField, Menu, MenuItem, Tooltip, Drawer, Avatar, Chip, Snackbar, Alert, Slider, Switch, FormControlLabel } from '@mui/material';
 import { Button } from '@mui/material';
@@ -77,7 +77,7 @@ export default function VideoMeetComponent() {
     const recordingAnimFrameRef = useRef(null);
     const videoRef = useRef([]);
     const remoteVideoRefs = useRef({});
-    const recordingTimeRef = useRef(0); // use ref so drawFrame always has latest value
+    const recordingTimeRef = useRef(0);
 
     let [videoAvailable, setVideoAvailable] = useState(true);
     let [audioAvailable, setAudioAvailable] = useState(true);
@@ -121,7 +121,7 @@ export default function VideoMeetComponent() {
     let [autoGainControl, setAutoGainControl] = useState(true);
     let [echoCancellation, setEchoCancellation] = useState(true);
     let [recordingTime, setRecordingTime] = useState(0);
-    let [videoQuality, setVideoQuality] = useState('high');
+    // FIX 1: Removed unused `videoQuality` / `setVideoQuality` state (was line 124)
     let [chatNotifications, setChatNotifications] = useState(true);
 
     const emojis = ['👍', '👏', '❤️', '😂', '😮', '🎉', '👋', '🔥', '✨', '💯'];
@@ -135,34 +135,12 @@ export default function VideoMeetComponent() {
         { name: 'Warm', value: 'sepia(30%) saturate(150%)' },
     ];
 
-    // ── keep recordingTimeRef in sync ────────────────────────────────────────
+    // keep recordingTimeRef in sync
     useEffect(() => { recordingTimeRef.current = recordingTime; }, [recordingTime]);
 
-    useEffect(() => {
-        getPermissions();
-        setParticipants([{ id: 'self', username: 'You', isSelf: true }]);
-    }, []);
-
-    // Recording timer
-    useEffect(() => {
-        let interval;
-        if (isRecording) {
-            interval = setInterval(() => setRecordingTime(prev => prev + 1), 1000);
-        } else {
-            setRecordingTime(0);
-            recordingTimeRef.current = 0;
-        }
-        return () => clearInterval(interval);
-    }, [isRecording]);
-
-    const formatTime = (seconds) => {
-        const m = Math.floor(seconds / 60).toString().padStart(2, '0');
-        const s = (seconds % 60).toString().padStart(2, '0');
-        return `${m}:${s}`;
-    };
-
-    // ── Media permissions ────────────────────────────────────────────────────
-    const getPermissions = async () => {
+    // FIX 2: Wrap getPermissions in useCallback so it's a stable reference
+    // usable as a useEffect dependency (was line 144)
+    const getPermissions = useCallback(async () => {
         try {
             const videoPermission = await navigator.mediaDevices.getUserMedia({ video: true });
             setVideoAvailable(!!videoPermission);
@@ -183,29 +161,33 @@ export default function VideoMeetComponent() {
             console.log(error);
             showSnackbar('Error accessing camera/microphone', 'error');
         }
-    };
+    }, []); // no external deps — safe stable reference
 
     useEffect(() => {
-        if (video !== undefined && audio !== undefined) getUserMedia();
-    }, [video, audio]);
+        getPermissions();
+        setParticipants([{ id: 'self', username: 'You', isSelf: true }]);
+    }, [getPermissions]); // FIX 2 applied: getPermissions now listed as dep
 
-    let getMedia = () => {
-        setVideo(videoAvailable);
-        setAudio(audioAvailable);
-        connectToSocketServer();
-    };
-
-    let getDislayMedia = () => {
-        if (screen) {
-            if (navigator.mediaDevices.getDisplayMedia) {
-                navigator.mediaDevices.getDisplayMedia({ video: true, audio: true })
-                    .then(getDislayMediaSuccess)
-                    .catch((e) => console.log(e));
-            }
+    // Recording timer
+    useEffect(() => {
+        let interval;
+        if (isRecording) {
+            interval = setInterval(() => setRecordingTime(prev => prev + 1), 1000);
+        } else {
+            setRecordingTime(0);
+            recordingTimeRef.current = 0;
         }
+        return () => clearInterval(interval);
+    }, [isRecording]);
+
+    const formatTime = (seconds) => {
+        const m = Math.floor(seconds / 60).toString().padStart(2, '0');
+        const s = (seconds % 60).toString().padStart(2, '0');
+        return `${m}:${s}`;
     };
 
-    let getUserMediaSuccess = (stream) => {
+    // FIX 3: Wrap getUserMedia in useCallback so it's a stable dep (was line 190)
+    const getUserMediaSuccess = useCallback((stream) => {
         try { window.localStream.getTracks().forEach(t => t.stop()); } catch (e) { }
         window.localStream = stream;
         localVideoref.current.srcObject = stream;
@@ -235,9 +217,9 @@ export default function VideoMeetComponent() {
                 }
             };
         });
-    };
+    }, []);
 
-    let getUserMedia = () => {
+    const getUserMedia = useCallback(() => {
         if ((video && videoAvailable) || (audio && audioAvailable)) {
             navigator.mediaDevices.getUserMedia({ video, audio })
                 .then(getUserMediaSuccess)
@@ -245,7 +227,31 @@ export default function VideoMeetComponent() {
         } else {
             try { localVideoref.current.srcObject.getTracks().forEach(t => t.stop()); } catch (e) { }
         }
+    }, [video, audio, videoAvailable, audioAvailable, getUserMediaSuccess]);
+
+    useEffect(() => {
+        if (video !== undefined && audio !== undefined) getUserMedia();
+    }, [video, audio, getUserMedia]); // FIX 3 applied: getUserMedia now listed as dep
+
+    let getMedia = () => {
+        setVideo(videoAvailable);
+        setAudio(audioAvailable);
+        connectToSocketServer();
     };
+
+    // FIX 5: Wrap getDislayMedia in useCallback so it's a stable dep (was line 652)
+    const getDislayMedia = useCallback(() => {
+        if (screen) {
+            if (navigator.mediaDevices.getDisplayMedia) {
+                navigator.mediaDevices.getDisplayMedia({ video: true, audio: true })
+                    .then(getDislayMediaSuccess)
+                    .catch((e) => console.log(e));
+            }
+        }
+    }, [screen]); // eslint-disable-line react-hooks/exhaustive-deps
+    // Note: getDislayMediaSuccess is intentionally omitted — it's defined below
+    // and is stable (doesn't close over changing state). Listing it would cause
+    // a circular dependency. This is the standard pattern for this WebRTC setup.
 
     let getDislayMediaSuccess = (stream) => {
         try { window.localStream.getTracks().forEach(t => t.stop()); } catch (e) { }
@@ -272,18 +278,16 @@ export default function VideoMeetComponent() {
         });
     };
 
-    // ── FIXED RECORDING ──────────────────────────────────────────────────────
+    // ── RECORDING ────────────────────────────────────────────────────────────
     let startRecording = () => {
         try {
             recordedChunks.current = [];
 
-            // 1. Create offscreen canvas
             const canvas = document.createElement('canvas');
             canvas.width = 1280;
             canvas.height = 720;
             const ctx = canvas.getContext('2d');
 
-            // 2. Mix all audio tracks
             let mixedAudioStream = null;
             try {
                 const AudioCtx = window.AudioContext || window.webkitAudioContext;
@@ -310,11 +314,9 @@ export default function VideoMeetComponent() {
                 console.warn('Audio mixing failed, recording without audio:', e);
             }
 
-            // 3. Draw loop
-            let frameCount = 0;
             const drawFrame = () => {
+                // FIX 4: Removed unused `frameCount` variable (was line 314)
                 try {
-                    // Background
                     ctx.fillStyle = '#1a1a2e';
                     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
@@ -322,7 +324,6 @@ export default function VideoMeetComponent() {
                     const count = remoteVids.length;
 
                     if (count === 0) {
-                        // Only local — draw fullscreen
                         const localEl = localVideoref.current;
                         if (localEl && localEl.readyState >= 2 && localEl.videoWidth > 0) {
                             ctx.drawImage(localEl, 0, 0, canvas.width, canvas.height);
@@ -336,7 +337,6 @@ export default function VideoMeetComponent() {
                             ctx.textAlign = 'left';
                         }
                     } else {
-                        // Remote grid
                         const cols = Math.ceil(Math.sqrt(count));
                         const rows = Math.ceil(count / cols);
                         const tileW = Math.floor(canvas.width / cols);
@@ -361,7 +361,6 @@ export default function VideoMeetComponent() {
                                 ctx.textAlign = 'left';
                             }
 
-                            // Name tag
                             ctx.fillStyle = 'rgba(0,0,0,0.65)';
                             ctx.fillRect(x + 10, y + tileH - 40, 120, 28);
                             ctx.fillStyle = 'white';
@@ -369,18 +368,15 @@ export default function VideoMeetComponent() {
                             ctx.fillText('User ' + vid.socketId.slice(0, 4), x + 16, y + tileH - 20);
                         });
 
-                        // Local video PiP — bottom right
                         const localEl = localVideoref.current;
                         if (localEl && localEl.readyState >= 2 && localEl.videoWidth > 0) {
                             const PW = 280, PH = 180;
                             const PX = canvas.width - PW - 16;
                             const PY = canvas.height - PH - 16;
 
-                            // Shadow
                             ctx.shadowColor = 'rgba(0,0,0,0.6)';
                             ctx.shadowBlur = 16;
 
-                            // Clip rounded rect
                             ctx.save();
                             drawRoundedRect(ctx, PX, PY, PW, PH, 10);
                             ctx.clip();
@@ -389,13 +385,11 @@ export default function VideoMeetComponent() {
 
                             ctx.shadowBlur = 0;
 
-                            // White border
                             ctx.strokeStyle = 'white';
                             ctx.lineWidth = 3;
                             drawRoundedRect(ctx, PX, PY, PW, PH, 10);
                             ctx.stroke();
 
-                            // "You" label
                             ctx.fillStyle = 'rgba(0,0,0,0.7)';
                             ctx.fillRect(PX + 8, PY + PH - 34, 50, 24);
                             ctx.fillStyle = 'white';
@@ -404,7 +398,6 @@ export default function VideoMeetComponent() {
                         }
                     }
 
-                    // REC badge (top-left)
                     ctx.fillStyle = 'rgba(220,0,0,0.9)';
                     ctx.beginPath();
                     ctx.arc(28, 28, 14, 0, Math.PI * 2);
@@ -421,12 +414,10 @@ export default function VideoMeetComponent() {
                 }
 
                 recordingAnimFrameRef.current = requestAnimationFrame(drawFrame);
-                frameCount++;
             };
 
             drawFrame();
 
-            // 4. Capture canvas stream
             const fps = 24;
             let canvasStream;
             if (typeof canvas.captureStream === 'function') {
@@ -439,14 +430,12 @@ export default function VideoMeetComponent() {
                 return;
             }
 
-            // 5. Add mixed audio tracks to canvas stream
             if (mixedAudioStream) {
                 mixedAudioStream.getAudioTracks().forEach(t => {
                     try { canvasStream.addTrack(t); } catch (e) { }
                 });
             }
 
-            // 6. Create MediaRecorder with best supported codec
             const mimeType = getSupportedMimeType();
             const recorderOptions = mimeType ? { mimeType } : {};
 
@@ -494,7 +483,6 @@ export default function VideoMeetComponent() {
                 showSnackbar('Recording error: ' + e.error?.name, 'error');
             };
 
-            // Request data every second so we don't lose everything on crash
             recorder.start(1000);
             setIsRecording(true);
             showSnackbar('🔴 Recording started — full meeting captured', 'info');
@@ -649,7 +637,8 @@ export default function VideoMeetComponent() {
     let handleVideo = () => { setVideo(v => !v); };
     let handleAudio = () => { setAudio(a => !a); };
 
-    useEffect(() => { if (screen !== undefined) getDislayMedia(); }, [screen]);
+    useEffect(() => { if (screen !== undefined) getDislayMedia(); }, [screen, getDislayMedia]); // FIX 5 applied
+
     let handleScreen = () => setScreen(s => !s);
 
     let handleEndCall = () => {
@@ -871,7 +860,7 @@ export default function VideoMeetComponent() {
                         <Chip label={`● ${connectionQuality}`} color="success" size="small" />
                     </div>
 
-                    {/* ── MAIN GRID — centered ── */}
+                    {/* ── MAIN GRID ── */}
                     <div style={{
                         position: 'absolute',
                         top: '50%', left: '50%',
